@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  labels:
+    app: spark
+    role: master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark
+      role: master
+  template:
+    metadata:
+      labels:
+        app: spark
+        role: master
+    spec:            
+      containers:
+        - name: master
+          image: jfriasl-spark-base
+          imagePullPolicy: Never
+          workingDir: /mnt/volume
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              # Iniciar Spark Master en background
+              $SPARK_HOME/bin/spark-class org.apache.spark.deploy.master.Master --host 0.0.0.0 &                          
+              # Iniciar JupyterLab              
+              jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''
+          ports:
+            - containerPort: 7077
+            - containerPort: 8080
+            - containerPort: 8888
+            - containerPort: 29500          
+          volumeMounts:
+            - mountPath: /opt/workspace
+              name: jupyter-volume                 
+            - mountPath: /mnt/volume
+              name: shared-volume                        
+          env:
+            - name: SPARK_MASTER_HOST
+              value: "spark-master"
+            - name: SPARK_MASTER_PORT
+              value: "7077"
+            - name: SPARK_MASTER_WEBUI_PORT
+              value: "8080"
+            - name: MASTER_ADDR
+              value: "spark-master"
+            - name: MASTER_PORT
+              value: "29500"
+            - name: TORCH_DISTRIBUTED_PORT_RANGE
+              value: "29500-29519"
+      volumes:
+        - name: shared-volume
+          hostPath:
+            path: /mnt/volume
+        - name: jupyter-volume
+          hostPath:
+            path: /opt/workspace
