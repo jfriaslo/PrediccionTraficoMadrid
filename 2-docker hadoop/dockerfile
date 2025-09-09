@@ -1,0 +1,181 @@
+# Imagen base. Partimos de Ubuntu 22.04
+# Nombre de imagen: jfriasl-spark-hadoop
+
+# docker run -it -p 8888:8888 -p 4040:4040  jfriasl-spark-hadoop bash
+# fichero hadoop
+
+FROM ubuntu:22.04
+LABEL mantainer="jmfrias"
+
+ARG spark_uid=1000
+ARG spark_gid=1000
+
+RUN groupadd -g ${spark_gid} spark && \
+    useradd -m -u ${spark_uid} -g ${spark_gid} -s /bin/bash spark
+
+RUN apt update && apt upgrade -y
+RUN apt install curl wget -y 
+
+WORKDIR /media
+
+RUN curl -O https://dlcdn.apache.org/spark/spark-4.0.0/spark-4.0.0-bin-hadoop3.tgz
+#RUN curl -O https://archive.apache.org/dist/spark/spark-4.0.0/spark-4.0.0-bin-hadoop3.tgz
+
+# Variables de entorno
+ENV SPARK_HOME="/opt/spark"
+ENV HADOOP_HOME="/opt/hadoop"
+
+RUN mkdir -p ${HADOOP_HOME} 
+RUN mkdir -p ${SPARK_HOME}
+
+RUN tar xvf spark-4.0.0-bin-hadoop3.tgz
+
+RUN mv spark-4.0.0-bin-hadoop3/* ${SPARK_HOME} \
+&& rmdir spark-4.0.0-bin-hadoop3/ \
+&& apt install openjdk-17-jdk -y \
+&& rm spark-4.0.0-bin-hadoop3.tgz \
+&& cd ${SPARK_HOME} \
+&& mkdir /home/spark/work-dir \
+&& chown -R spark:spark . \
+&& chown -R spark:spark /opt/spark \
+&& chown -R spark:spark /home/spark 
+RUN mkdir /work \
+&& chown -R spark:spark /work
+
+# Descargar e instalar Hadoop
+RUN curl -O https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz && \
+    tar -xvzf hadoop-3.3.6.tar.gz && \
+    mv hadoop-3.3.6/* ${HADOOP_HOME} && \
+    rm -rf hadoop-3.3.6 hadoop-3.3.6.tar.gz
+
+# Variables de entorno Hadoop
+ENV HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+ENV HADOOP_COMMON_HOME=$HADOOP_HOME
+ENV HADOOP_HDFS_HOME=$HADOOP_HOME
+ENV YARN_HOME=$HADOOP_HOME
+ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+
+RUN mkdir -p $HADOOP_HOME/etc/hadoop
+
+# Esto es si no queremos instalar conda
+RUN apt update
+RUN apt install -y python3.11 python3-pip python3.11-dev 
+RUN python3 -m pip install --upgrade pip
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+RUN python3 -m pip install jupyterlab
+RUN python3 -m pip install cloudpickle
+RUN python3 -m pip install numpy torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cpu
+
+RUN python3 -m pip install pyarrow
+RUN python3 -m pip install pandas
+RUN python3 -m pip install numpy==1.26
+RUN python3 -m pip install delta-spark
+RUN python3 -m pip install pyspark==4.0.0
+
+# Instalación Anaconda Python
+#RUN apt install libgl1-mesa-glx libegl1-mesa libxrandr2 libxrandr2 libxss1 libxcursor1 libxcomposite1 libasound2 libxi6 libxtst6 -y
+#RUN wget https://repo.continuum.io/archive/Anaconda3-2024.02-1-Linux-x86_64.sh 
+#RUN chmod +x Anaconda3-2024.02-1-Linux-x86_64.sh 
+#RUN ./Anaconda3-2024.02-1-Linux-x86_64.sh -b -p /opt/anaconda 
+#RUN rm -rf Anaconda3-2024.02-1-Linux-x86_64.sh
+#RUN chown -R spark:spark /opt/anaconda \
+#RUN /opt/anaconda/bin/conda init  
+#ENV PATH=$PATH:$SPARK_HOME/bin:/opt/anaconda/bin
+
+ENV PATH=$PATH:$SPARK_HOME/bin
+ENV PYSPARK_PYTHON=/usr/bin/python3.11
+
+#ENV PYSPARK_DRIVER_PYTHON=jupyter
+#ENV PYSPARK_DRIVER_PYTHON=jupyter-lab
+#ENV PYSPARK_DRIVER_PYTHON_OPTS='notebooks --ip=0.0.0.0 --allow-root'
+#ENV PYSPARK_DRIVER_PYTHON_OPTS='--ip=0.0.0.0'
+
+EXPOSE 8888
+EXPOSE 4040
+EXPOSE 7077
+
+RUN apt install openssh-server -y
+RUN mkdir /home/spark/workspace
+RUN chown -R spark:spark /home/spark/workspace
+#RUN mkdir /home/spark/workspace/data
+#RUN chown -R spark:spark /home/spark/workspace/data
+
+RUN apt install -y netcat-openbsd
+RUN apt install sudo
+RUN usermod -a -G sudo spark
+#WORKDIR /work
+RUN apt install -y locales \
+ && dpkg-reconfigure -f noninteractive locales \
+ && locale-gen C.UTF-8 \
+ && /usr/sbin/update-locale LANG=C.UTF-8 \
+ && echo "es_ES.UTF-8 UTF-8" >> /etc/locale.gen \
+ && locale-gen
+
+ # Teclado y sistema en español.
+ENV LANG=es_ES.UTF-8
+ENV LANGUAGE=es_ES:es
+ENV LC_ALL=es_ES.UTF-8
+
+#ENV MASTER_ADDR=spark-master
+ENV MASTER_PORT=29500
+ENV TORCH_DISTRIBUTED_PORT_RANGE=29500-29519
+
+# Añadir puertos fijos para el driver
+#ENV SPARK_DRIVER_PORT=7078
+#ENV SPARK_BLOCKMANAGER_PORT=7079
+#EXPOSE 7078
+#EXPOSE 7079
+
+RUN apt install ssh vim net-tools -y
+
+COPY start-master.sh /opt/spark/bin
+COPY start-worker.sh /opt/spark/bin
+
+## soporte hadoop
+COPY core-site.xml $HADOOP_HOME/etc/hadoop
+COPY hdfs-site.xml $HADOOP_HOME/etc/hadoop
+
+ENV SPARK_CONF_DIR=/opt/spark/conf
+ENV SPARK_HADOOP_OPTS="-Dspark.hadoop.fs.defaultFS=hdfs://master:9000"
+
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+#ENV HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+ENV YARN_CONF_DIR=/opt/hadoop/etc/hadoop
+
+RUN mkdir -p /opt/hadoop/dfs/name 
+RUN mkdir -p /opt/hadoop/dfs/data 
+RUN chown -R spark:spark /opt/hadoop/dfs
+RUN chmod +x /opt/spark/bin/start-master.sh
+RUN chmod +x /opt/spark/bin/start-worker.sh
+RUN chown -R spark:spark /opt/spark/bin/start-master.sh
+RUN chown -R spark:spark /opt/spark/bin/start-worker.sh
+COPY spark-defaults.conf /opt/spark/conf/spark-defaults.conf
+
+RUN mkdir -p /tmp/spark
+RUN chmod -R 777 /tmp/spark
+RUN chown -R spark:spark /opt/spark
+RUN mkdir -p /run/sshd 
+RUN chown -R spark:spark /tmp/spark  
+RUN chown -R spark:spark /home/spark/workspace 
+RUN mkdir -p /home/spark/notebooks
+RUN chown -R spark:spark /home/spark/notebooks 
+RUN chown -R spark:spark /opt/hadoop/dfs
+RUN chown -R spark:spark /opt/hadoop/dfs/data
+RUN chown -R spark:spark /opt/hadoop/dfs/name
+RUN apt install -y iputils-ping
+RUN usermod -a -G sudo spark
+
+RUN echo "spark ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+WORKDIR /home/spark/
+
+RUN echo 'spark:spark' | chpasswd
+
+RUN chmod 1777 /tmp
+
+
+USER spark
+
+
